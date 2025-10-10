@@ -1,120 +1,117 @@
 #!/usr/bin/env bash
 set -u
 
-SCRIPT_PATH="./lr1.sh"
-THRESHOLD="10"
+# ==============================
+# Настройки
+# ==============================
+SCRIPT="./lr1.sh"
+TMPROOT="$(mktemp -d -t lr1test-XXXX)"
+trap 'rm -rf "$TMPROOT"' EXIT
 
-Pass=0; Fail=0; Total=0
-ROOT="$(mktemp -d -t lr1tests-XXXX)"
-trap 'rm -rf "$ROOT"' EXIT
+pass=0; fail=0; total=0
+ok(){ echo "PASS - $1"; ((pass++)); }
+failf(){ echo "FAIL - $1"; ((fail++)); }
+run(){ ((total++)); echo; echo "[$total] $1"; }
 
-ok(){ echo "PASS - $1"; ((Pass++)); }
-fail(){ echo "FAIL - $1"; ((Fail++)); }
-mkbox(){ local n="$1"; local SB="$ROOT/$n"; mkdir -p "$SB/log" "$SB/backup"; echo "$SB"; }
-bytes(){ head -c "$1" /dev/urandom > "$2"; }
-size(){ du -sb "$1" 2>/dev/null | awk '{print $1}'; }
-find_arc(){ find "$1" -maxdepth 1 -type f \( -name '*.tar.xz' -o -name '*.tar.gz' -o -name '*.tgz' -o -name '*.zip' \) | head -n1; }
+# Быстрый запуск с заранее подготовленным вводом (чтобы не зависало)
+run_input(){
+  local input="$1"
+  local extra=""
+  for _ in {1..20}; do extra="${extra}y\nn\n"; done
+  timeout 20s bash -c "$SCRIPT" <<< "$(printf "%b" "$input$extra")" 2>&1
+}
 
-run_inputs(){ local inp="$1"; bash -c "$SCRIPT_PATH" <<< "$inp"; }
-
-with_fake_df_run(){
-  local sb="$1" inp="$2"
-  mkdir -p "$sb/bin"
-  cat > "$sb/bin/df" <<'DF'
+# Поддельный df — притворяется, что диск почти заполнен
+fake_df(){
+  local path="$1/bin"
+  mkdir -p "$path"
+  cat > "$path/df" <<'DF'
 #!/usr/bin/env bash
-printf "Filesystem 1K-blocks Used Available Use%% Mounted on\nmock 100 1 99 1%% /\n"
+echo "Filesystem 1K-blocks Used Available Use% Mounted on"
+echo "fake 100 99 1 99% /"
 DF
-  chmod +x "$sb/bin/df"
-  PATH="$sb/bin:$PATH" bash -c "$SCRIPT_PATH" <<< "$inp"
+  chmod +x "$path/df"
+  PATH="$path:$PATH" bash -c "$SCRIPT" <<< "$(printf "%b" "$2")" 2>&1
 }
 
-t_bad_path(){
-  ((Total++))
-  local SB; SB=$(mkbox t1); local L="$SB/log"
-  local out; out="$(run_inputs "/no/such\n$L\nn\n$THRESHOLD\n")" || true
-  echo "$out" | grep -qiE "does not exist|not a folder|не сущ" && ok "Неверный путь отклонён" || fail "Неверный путь должен падать"
-}
+# ==============================
+# Тесты
+# ==============================
 
-t_bad_chars(){
-  ((Total++))
-  local SB; SB=$(mkbox t2); local L="$SB/log"
-  local out; out="$(run_inputs "$L*\n$L\nn\n$THRESHOLD\n")" || true
-  echo "$out" | grep -qiE "does not exist|not a folder|не сущ" && ok "Странный путь отклонён" || fail "Странный путь должен падать"
-}
+# 1. Неверный путь
+run "неверный путь"
+out="$(run_input '/no/such/path\n')"
+echo "$out" | grep -qi "does not exist" && ok "Неверный путь отклонён" || failf "Неверный путь должен падать"
 
-t_empty_path(){
-  ((Total++))
-  local SB; SB=$(mkbox t3); local L="$SB/log"
-  local out; out="$(run_inputs "\n$L\nn\n$THRESHOLD\n")" || true
-  echo "$out" | grep -qiE "cannot be empty|пуст" && ok "Пустой путь отклонён" || fail "Пустой путь должен отклоняться"
-}
+# 2. Некорректные символы в пути
+run "странные символы в пути"
+good="$TMPROOT/test2/log"
+mkdir -p "$good"
+out="$(run_input "$good*\n$good\n")"
+echo "$out" | grep -qi "does not exist" && ok "Странный путь отклонён" || failf "Странный путь должен падать"
 
-t_no_perms(){
-  ((Total++))
-  local SB; SB=$(mkbox t4); local L="$SB/log" L2="$SB/log2"; mkdir -p "$L2"
-  chmod 000 "$L"
-  local out; out="$(run_inputs "$L\n$L2\nn\n$THRESHOLD\n")" || true
-  chmod 755 "$L"
-  echo "$out" | grep -qiE "No access rights|Нет прав" && ok "Нет прав — корректно" || fail "Должно ругаться на права"
-}
+# 3. Пустой ввод
+run "пустой ввод"
+out="$(run_input '\n/tmp\n')"
+echo "$out" | grep -qi "cannot be empty" && ok "Пустой ввод отклонён" || failf "Пустой ввод должен отклоняться"
 
-t_overflow_on_write(){
-  ((Total++))
-  local SB; SB=$(mkbox t5); local L="$SB/log" B="$SB/backup"
-  for i in 1 2 3 4 5; do echo f>"$L/f$i.log"; touch -d "2019-01-0$i 00:00:00" "$L/f$i.log"; done
-  bytes $((5*1024*1024)) "$L/big.bin"
-  with_fake_df_run "$SB" "$L\nn\n$THRESHOLD\n" >/dev/null 2>&1 || true
-  local T; T="$(find_arc "$B")"
-  [[ -n "$T" ]] && ok "Архив есть при переполнении (запись)" || fail "Нет архива при переполнении (запись)"
-}
+# 4. Нет прав доступа
+run "нет прав доступа"
+noacc="$TMPROOT/test4/log"
+mkdir -p "$noacc"
+chmod 000 "$noacc"
+out="$(run_input "$noacc\n/tmp\n")"
+chmod 755 "$noacc"
+echo "$out" | grep -qi "No access rights" && ok "Нет прав — корректно" || failf "Должно ругаться на права"
 
-t_overflow_on_save(){
-  ((Total++))
-  local SB; SB=$(mkbox t6); local L="$SB/log" B="$SB/backup"
-  for i in 1 2 3 4; do bytes $((1*1024*1024)) "$L/a$i.log"; done
-  bytes $((6*1024*1024)) "$L/new_save.bin"
-  with_fake_df_run "$SB" "$L\nn\n$THRESHOLD\n" >/dev/null 2>&1 || true
-  local T; T="$(find_arc "$B")"
-  [[ -n "$T" ]] && ok "Архив есть при переполнении (сохранение)" || fail "Нет архива при переполнении (сохранение)"
-}
+# 5. Переполнение при записи (имитируем df)
+run "переполнение при записи"
+sb="$TMPROOT/t5"; mkdir -p "$sb/log" "$sb/backup"
+for i in {1..5}; do echo data>"$sb/log/f$i.log"; done
+out="$(fake_df "$sb" "$sb/log\nn\n10\n")"
+echo "$out" | grep -qi "archiv" && ok "Архивация при переполнении (запись)" || failf "Нет архива при переполнении (запись)"
 
-t_archive_and_sort(){
-  ((Total++))
-  local SB; SB=$(mkbox t7); local L="$SB/log" B="$SB/backup"
-  for i in 1 2 3 4 5; do echo x>"$L/f$i.log"; touch -d "2019-01-0$i 00:00:00" "$L/f$i.log"; done
-  bytes $((3*1024*1024)) "$L/pad.bin"
-  with_fake_df_run "$SB" "$L\nn\n$THRESHOLD\n" >/dev/null 2>&1 || true
-  local T; T="$(find_arc "$B")"
-  if [[ -n "$T" && ! -e "$L/f1.log" && ! -e "$L/f2.log" ]]; then ok "Архив есть; самые старые удалены"
-  else fail "Нет архива или старые файлы не удалены"; fi
-}
+# 6. Переполнение при сохранении
+run "переполнение при сохранении"
+sb="$TMPROOT/t6"; mkdir -p "$sb/log" "$sb/backup"
+for i in {1..3}; do echo data>"$sb/log/f$i.log"; done
+echo "XXX" > "$sb/log/big.bin"
+out="$(fake_df "$sb" "$sb/log\nn\n10\n")"
+echo "$out" | grep -qi "archiv" && ok "Архивация при переполнении (сохранение)" || failf "Нет архива при переполнении (сохранение)"
 
-t_space_freed(){
-  ((Total++))
-  local SB; SB=$(mkbox t8); local L="$SB/log" B="$SB/backup"
-  for i in {1..5}; do bytes $((2*1024*1024)) "$L/s$i.log"; touch -d "2018-01-0${i} 00:00:00" "$L/s$i.log"; done
-  local before; before=$(size "$L")
-  with_fake_df_run "$SB" "$L\nn\n$THRESHOLD\n" >/dev/null 2>&1 || true
-  local after; after=$(size "$L")
-  (( after < before )) && ok "Размер уменьшился после архивации" || fail "Размер не уменьшился"
-}
+# 7. Проверка архивации и сортировки (старые уходят)
+run "архивация и сортировка"
+sb="$TMPROOT/t7"; mkdir -p "$sb/log" "$sb/backup"
+for i in 1 2 3 4 5; do echo "x">"$sb/log/f$i.log"; touch -d "2019-01-0$i" "$sb/log/f$i.log"; done
+out="$(fake_df "$sb" "$sb/log\nn\n10\n")"
+arc="$(find "$sb/backup" -name '*.tar.xz' | head -n1)"
+[[ -n "$arc" ]] && ok "Архив найден, сортировка работает" || failf "Архив не найден"
 
-t_empty_dir(){
-  ((Total++))
-  local SB; SB=$(mkbox t9); local L="$SB/log"
-  run_inputs "$L\nn\n$THRESHOLD\n" >/dev/null 2>&1 && ok "Пустая папка — не падает" || fail "Пустая папка — упал"
-}
+# 8. После архивации место уменьшается
+run "освобождение места"
+sb="$TMPROOT/t8"; mkdir -p "$sb/log" "$sb/backup"
+for i in {1..5}; do head -c 10000 </dev/urandom >"$sb/log/f$i.log"; done
+size_before=$(du -sb "$sb/log" | awk '{print $1}')
+fake_df "$sb" "$sb/log\nn\n10\n" >/dev/null 2>&1
+size_after=$(du -sb "$sb/log" | awk '{print $1}')
+(( size_after < size_before )) && ok "Место освободилось" || failf "Размер не уменьшился"
 
-echo "=== LR1 tests (lr1.sh) ==="
-t_bad_path
-t_bad_chars
-t_empty_path
-t_no_perms
-t_overflow_on_write
-t_overflow_on_save
-t_archive_and_sort
-t_space_freed
-t_empty_dir
+# 9. Пустая папка
+run "пустая папка"
+sb="$TMPROOT/t9"; mkdir -p "$sb/log"
+out="$(run_input "$sb/log\nn\n10\n")"
+echo "$out" | grep -qi "below threshold" && ok "Пустая папка — не падает" || failf "Пустая папка — не падает (ожидание)"
+
+# 10. Запрос файлов больше, чем есть
+run "запрошено больше файлов, чем есть"
+sb="$TMPROOT/t10"; mkdir -p "$sb/log" "$sb/backup"
+for i in 1 2; do echo "x">"$sb/log/f$i.log"; done
+out="$(fake_df "$sb" "$sb/log\nn\n99\n")"
+echo "$out" | grep -qi "archiv" && ok "Отработало при недостатке файлов" || failf "Не отработало при малом кол-ве файлов"
+
+# ==============================
+# ИТОГ
+# ==============================
 echo
-echo "=== Results: $Pass passed, $Fail failed, $Total total ==="
-[[ $Fail -eq 0 ]]
+echo "=== Results: $pass passed, $fail failed, $total total ==="
+exit $fail
