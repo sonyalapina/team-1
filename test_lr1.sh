@@ -1,96 +1,78 @@
 #!/bin/bash
-
 SCRIPT="./lr1.sh"
-TEST_DIR="./tests"
-mkdir -p "$TEST_DIR"
-cd "$TEST_DIR" || exit 1
-
-LOG_DIR="./log"
-BACKUP_DIR="./backup"
+TEST_DIR="$(pwd)/test_env"
+LOG_DIR="$TEST_DIR/log"
+BACKUP_DIR="$TEST_DIR/backup"
 mkdir -p "$LOG_DIR" "$BACKUP_DIR"
-chmod +rw "$LOG_DIR" "$BACKUP_DIR"
-
-echo "=== FULL TEST SUITE FOR lr1.sh ==="
-total=0
-passed=0
 
 run_test() {
-    local name="$1"
+    local description="$1"
     local input="$2"
-    local expected="$3"
-    total=$((total+1))
-    echo ""
-    echo "[$total] $name"
-    echo "--------------------------------"
-    echo -e "$input" | bash "$SCRIPT" >out.txt 2>&1
-    if grep -qi "$expected" out.txt; then
-        echo "✅ PASS - $name"
-        passed=$((passed+1))
+    local condition="$3"
+
+    echo "------------------------------------------------------------"
+    echo "🔹 TEST: $description"
+    echo "------------------------------------------------------------"
+
+    echo -e "$input" | bash "$SCRIPT" > output.log 2>&1
+    sleep 1
+
+    if eval "$condition"; then
+        echo "✅ PASS — $description"
     else
-        echo "❌ FAIL - $name"
-        echo "Output:"
-        cat out.txt
+        echo "❌ FAIL — $description"
+        echo "----- Script output -----"
+        cat output.log
+        echo "--------------------------"
     fi
+    echo
+    sleep 1
 }
 
-run_test "Неверный путь" "/wrong/path\n" "does not exist"
-run_test "Некорректные символы" "/tmp/l?*g\n" "does not exist"
-run_test "Пустая строка" "\n" "cannot be empty"
-mkdir -p ./noaccess
-chmod 000 ./noaccess
-run_test "Нет прав доступа" "./noaccess\n" "No access rights"
-chmod 755 ./noaccess
+# 1️⃣ Проверка пустого пути
+run_test "Проверка пустого пути" "\n\n" \
+    "grep -q 'cannot be empty' output.log"
 
-mkdir -p ./log
-chmod 777 ./log
+# 2️⃣ Проверка несуществующего пути
+run_test "Несуществующая папка" "/fake/path\n\n" \
+    "grep -q 'does not exist' output.log"
 
-dd if=/dev/zero of=./log/bigfile1.log bs=1M count=3 &>/dev/null
-dd if=/dev/zero of=./log/bigfile2.log bs=1M count=3 &>/dev/null
-dd if=/dev/zero of=./log/bigfile3.log bs=1M count=3 &>/dev/null
+# 3️⃣ Проверка неправильной папки (не log)
+run_test "Папка не log" "$TEST_DIR\n\n" \
+    "grep -q 'is not a log folder' output.log"
 
-input="`pwd`/log\ny\n10\ny\ny\n5\nn\n"
-run_test "Переполнение при записи файла" "$input" "Threshold exceeded"
+# 4️⃣ Проверка правильной папки log
+run_test "Правильная папка log" "$LOG_DIR\n10\nn\nn\nn\n" \
+    "grep -q 'Folder found' output.log"
 
-dd if=/dev/zero of=./log/bigfile4.log bs=1M count=3 &>/dev/null
-input="`pwd`/log\ny\n10\ny\ny\n5\nn\n"
-run_test "Переполнение при сохранении файла" "$input" "Threshold exceeded"
+# 5️⃣ Проверка установки порога
+run_test "Порог 50%" "$LOG_DIR\nn\n50\n" \
+    "grep -q 'Threshold set to: 50%' output.log"
 
-before_size=$(du -sb ./log | cut -f1)
-input="`pwd`/log\ny\n10\ny\ny\n5\nn\n"
-run_test "Архивация" "$input" "Archiving completed"
-after_size=$(du -sb ./log | cut -f1)
-if [ "$after_size" -lt "$before_size" ]; then
-    echo "✅ PASS - место освободилось после архивации"
-    passed=$((passed+1))
-else
-    echo "❌ FAIL - место не уменьшилось"
-fi
+# 6️⃣ Проверка переполнения (создаём большие файлы)
+echo "Создание тестовых файлов..."
+for i in {1..5}; do dd if=/dev/zero of="$LOG_DIR/file_$i.log" bs=1M count=10 &>/dev/null; done
 
-files_before=$(ls -1 ./backup | wc -l)
-input="`pwd`/log\ny\n10\ny\ny\n5\nn\n"
-bash "$SCRIPT" <<< "$input" >out.txt 2>&1
-files_after=$(ls -1 ./backup | wc -l)
-if [ "$files_after" -gt "$files_before" ]; then
-    echo "✅ PASS - архив создан"
-    passed=$((passed+1))
-else
-    echo "❌ FAIL - архив не создан"
-fi
+run_test "Переполнение и архивация" "$LOG_DIR\nn\n10\ny\n" \
+    "grep -q 'archived' output.log"
 
-find ./log -type f -exec touch -d "2 days ago" {} +
-dd if=/dev/zero of=./log/newfile.log bs=1M count=1 &>/dev/null
-input="`pwd`/log\ny\n10\ny\ny\n5\nn\n"
-bash "$SCRIPT" <<< "$input" >out.txt 2>&1
-if grep -q "Selected for archiving" out.txt && grep -q "old" out.txt; then
-    echo "✅ PASS - сортировка от старого к новому корректна"
-    passed=$((passed+1))
-else
-    echo "❌ FAIL - сортировка файлов неверна"
-fi
+# 7️⃣ Проверка удаления заархивированных файлов
+run_test "Удаление заархивированных файлов" "$LOG_DIR\nn\n10\ny\n" \
+    "[[ ! \$(ls $LOG_DIR) ]]"
 
-rm -rf ./log/*
-input="`pwd`/log\ny\n10\nn\n"
-run_test "Пограничный случай: пустая папка" "$input" "No action needed"
+# 8️⃣ Проверка повторной проверки после завершения
+run_test "Повторная проверка (отказ)" "$LOG_DIR\nn\n10\nn\n" \
+    "grep -q 'Завершение работы' output.log"
 
-echo ""
-echo "=== RESULT: $passed / $total PASSED ==="
+# 9️⃣ Проверка без ограничения размера
+run_test "Пропуск создания ограничения" "$LOG_DIR\nn\n10\nn\n" \
+    "grep -q 'Продолжение без ограничения' output.log"
+
+# 🔟 Проверка невозможности монтирования при непустой папке
+echo "test" > "$LOG_DIR/file_test.txt"
+run_test "Монтирование при непустой папке" "$LOG_DIR\ny\n100\n" \
+    "grep -q 'Папку .\\+ необходимо очистить' output.log"
+
+echo "=========================================================="
+echo "✅ Тестирование завершено. Проверяй вывод выше."
+echo "=========================================================="
