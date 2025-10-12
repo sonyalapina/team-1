@@ -9,6 +9,7 @@ mkdir -p "$BIN" "$TESTROOT"
 export PATH="$BIN:$PATH"
 timeout_cmd() { timeout 25s bash -c "$1"; }
 
+# --- MOCK BINARIES ---
 cat > "$BIN/fallocate" <<'F' ; chmod +x "$BIN/fallocate"
 #!/usr/bin/env bash
 dd if=/dev/zero of="$2" bs=1 count=0 2>/dev/null || true
@@ -63,6 +64,7 @@ else
 fi
 F
 
+# --- HELPERS ---
 run_and_capture(){
   local input="$1"
   local outf="$2"
@@ -84,19 +86,20 @@ make_test_env(){
   echo "$d"
 }
 
-# 1
+# --- TESTS ---
+
+# 1. Неверный путь
 total=$((total+1))
 d=$(make_test_env "t1")
 out="$TMPROOT/out1.txt"
 run_and_capture "/no/such/path\n" "$out"
 if check_grep "$out" "does not exist|not a folder|Folder '"; then
-  echo "PASS 1"
-  pass=$((pass+1))
+  echo "PASS 1"; pass=$((pass+1))
 else
   echo "FAIL 1"; cat "$out"; fail=$((fail+1))
 fi
 
-# 2
+# 2. Странные символы в пути
 total=$((total+1))
 d=$(make_test_env "t2")
 good="$d/log"
@@ -108,7 +111,7 @@ else
   echo "FAIL 2"; cat "$out"; fail=$((fail+1))
 fi
 
-# 3
+# 3. Пустой ввод
 total=$((total+1))
 d=$(make_test_env "t3")
 out="$TMPROOT/out3.txt"
@@ -119,7 +122,7 @@ else
   echo "FAIL 3"; cat "$out"; fail=$((fail+1))
 fi
 
-# 4
+# 4. Нет прав
 total=$((total+1))
 d=$(make_test_env "t4")
 chmod 000 "$d/log"
@@ -132,7 +135,7 @@ else
   echo "FAIL 4"; cat "$out"; fail=$((fail+1))
 fi
 
-# 5 overflow on write
+# 5. Архивация при переполнении
 total=$((total+1))
 d=$(make_test_env "t5")
 for i in {1..5}; do printf "old\n" >"$d/log/f$i.log"; touch -d "2019-01-0$i" "$d/log/f$i.log"; done
@@ -145,7 +148,7 @@ else
   echo "FAIL 5"; cat "$out"; fail=$((fail+1))
 fi
 
-# 6 overflow on save
+# 6. Архивация при превышении размера
 total=$((total+1))
 d=$(make_test_env "t6")
 for i in 1 2 3 4; do head -c 1048576 </dev/urandom >"$d/log/a$i.log"; done
@@ -158,7 +161,7 @@ else
   echo "FAIL 6"; cat "$out"; fail=$((fail+1))
 fi
 
-# 7 check archive created and contains oldest files
+# 7. Проверка создания архива
 total=$((total+1))
 d=$(make_test_env "t7")
 for i in 1 2 3 4 5; do printf "x$i" >"$d/log/f$i.log"; touch -d "2019-01-0$i" "$d/log/f$i.log"; done
@@ -172,7 +175,7 @@ else
   echo "FAIL 7 - no archive"; cat "$out"; fail=$((fail+1))
 fi
 
-# 8 sorting: oldest archived first
+# 8. Проверка сортировки (старые первыми)
 total=$((total+1))
 d=$(make_test_env "t8")
 for i in 1 2 3 4 5; do printf "x$i" >"$d/log/f$i.log"; touch -d "2019-01-0$i" "$d/log/f$i.log"; done
@@ -191,7 +194,7 @@ else
   echo "FAIL 8 - no archive"; cat "$out"; fail=$((fail+1))
 fi
 
-# 9 space freed after archive
+# 9. Проверка, что размер уменьшился
 total=$((total+1))
 d=$(make_test_env "t9")
 for i in 1 2 3 4 5; do head -c 200000 </dev/urandom >"$d/log/f$i.log"; done
@@ -205,12 +208,12 @@ else
   echo "FAIL 9"; cat "$out"; fail=$((fail+1))
 fi
 
-# 10 edge cases: empty dir and requesting more than exists
+# 10. Пустая папка и отсутствие файлов для архивации
 total=$((total+1))
 d=$(make_test_env "t10")
 out="$TMPROOT/out10a.txt"
 run_and_capture "$d/log\nn\n10\nn\n" "$out"
-if check_grep "$out" "Files not found|No suitable files found|below threshold"; then
+if check_grep "$out" "No suitable files found|below threshold|No files for archiving"; then
   echo "PASS 10a"; pass=$((pass+1))
 else
   echo "FAIL 10a"; cat "$out"; fail=$((fail+1))
@@ -227,6 +230,7 @@ else
   echo "FAIL 10b"; cat "$out"; fail=$((fail+1))
 fi
 
+# --- RESULTS ---
 echo
 echo "=== RESULTS: passed=$pass failed=$fail total=$((pass+fail)) ==="
 rm -rf "$TMPROOT"
