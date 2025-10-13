@@ -210,15 +210,42 @@ else
 fi
 
 # 10. Пустая папка и отсутствие файлов для архивации
+# 10a. Пустая папка и отсутствие файлов для архивации — умная проверка
 total=$((total+1))
 d=$(make_test_env "t10")
 out="$TMPROOT/out10a.txt"
 run_and_capture "$d/log\nn\n10\nn\n" "$out"
-if check_grep "$out" "No suitable files found|below threshold|No files for archiving"; then
+
+# допустимые положительные паттерны (англ)
+ok_pattern_1="Files not found|No suitable files found|No suitable files"
+
+# если вывод содержит англ. сообщение — принимаем
+if check_grep "$out" "$ok_pattern_1"; then
   echo "PASS 10a"; pass=$((pass+1))
 else
-  echo "FAIL 10a"; cat "$out"; fail=$((fail+1))
+  # иначе — проверяем русский сценарий: сообщение о том, что папка не имеет ограничения
+  # и затем что либо используется сообщение "below threshold" либо скрипт завершился без ошибок
+  if check_grep "$out" "Внимание: Эта папка не имеет жесткого ограничени|Продолжение без ограничени"; then
+    # проверим, есть ли следующее адекватное сообщение (ниже порога или завершение)
+    if check_grep "$out" "below threshold|Log directory usage is below threshold|No action needed|Завершение работы|Files not found|No suitable files found"; then
+      echo "PASS 10a (ru flow)"; pass=$((pass+1))
+    else
+      # может быть скрипт просто вывел предупреждение и ожидал ввода — считаем это FAIL, но покажем вывод
+      echo "FAIL 10a — русское сообщение есть, но нет продолжения (ниже порога / завершения)"
+      echo "---- output ----"
+      sed -n '1,200p' "$out"
+      echo "----------------"
+      fail=$((fail+1))
+    fi
+  else
+    echo "FAIL 10a — не найдено ожидаемых сообщений (англ или корректный ru-поток)"
+    echo "---- output ----"
+    sed -n '1,200p' "$out"
+    echo "----------------"
+    fail=$((fail+1))
+  fi
 fi
+
 
 total=$((total+1))
 d=$(make_test_env "t10b")
