@@ -1,23 +1,23 @@
 #!/bin/bash
 
 get_log_path(){
-	while true; do
-		read -p "Enter the path to the folder /log: " path
+        while true; do
+                read -p "Enter the path to the folder /log: " path
 
-		path=$(echo "$path" | xargs) 
+                path=$(echo "$path" | xargs)
 
-		if [ -z "$path" ]; then
-			echo "The path to the folder cannot be empty"
-			continue
-		fi
+                if [ -z "$path" ]; then
+                        echo "The path to the folder cannot be empty"
+                        continue
+                fi
 
-		path="${path/#\~/$HOME}"
-		normalized_path=$(realpath -s "$path" 2>/dev/null)
+                path="${path/#\~/$HOME}"
+                normalized_path=$(realpath -s "$path" 2>/dev/null)
 
-		if [ ! -d "$normalized_path" ]; then
-			echo "Folder '$path' does not exist or it is not a folder"
-			continue
-		fi
+                if [ ! -d "$normalized_path" ]; then
+                        echo "Folder '$path' does not exist or it is not a folder"
+                        continue
+                fi
 
         if [ $(basename "$normalized_path") != "log" ]; then
             echo "Folder '$path' is not a log folder"
@@ -152,7 +152,7 @@ input_threshold
 
 
 
-# Базовая директория в домашней папке 
+# Базовая директория в домашней папке
 BASE_DIR="$normalized_path/.."
 SOURCE_DIR="$BASE_DIR/log"
 BACKUP_DIR="$BASE_DIR/backup"
