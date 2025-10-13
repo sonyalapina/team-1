@@ -118,7 +118,7 @@ setup_size_limit() {
 input_threshold(){
     while true; do
         read -p "Enter threshold percent (1-100%): " THRESHOLD
-        THRESHOLD=$(echo "$THRESHOLD" | xargs)
+        THRESHOLD=$(echo "$THRESHOLD")
         if [ -z "$THRESHOLD" ]; then
             echo "Threshold cannot be empty"
             continue
@@ -157,7 +157,6 @@ BASE_DIR="$normalized_path/.."
 SOURCE_DIR="$BASE_DIR/log"
 BACKUP_DIR="$BASE_DIR/backup"
 
-# Создание всей структуры директорий
 mkdir -p "$BACKUP_DIR"
 
 while true; do
@@ -222,7 +221,7 @@ while true; do
         # Извлекаем размер и путь к файлу
         file_size=$(echo "$file_info" | awk '{print $2}')
 
-        read -r -a arr <<< "$file_info" #посметреть реализацию этого
+        read -r -a arr <<< "$file_info"
         file_path=""
         for ((i=2; i < ${#arr[@]}; i++)); do
             file_path+="${arr[i]}"
@@ -253,10 +252,7 @@ while true; do
         fi
     fi
 
-    echo "Files found (sorted from old to new):"
-    echo "$FILES_LIST" | tr ' ' '\n' | grep -v '^$' | awk '{print ". " $1}'
-
-    echo "Found $FILE_COUNT files to archive (total: $((TOTAL_ARCHIVED_SIZE / 1024)) KB)"
+    echo "Found $FILE_COUNT files to archive (total: $((TOTAL_ARCHIVED_SIZE / 1024 / 1024)) MB)"
 
     # Создание архива
     TIME=$(date +"%Y%m%d_%H%M%S")
@@ -270,12 +266,10 @@ while true; do
 
     if [ $? -eq 0 ]; then
         echo "$FILE_COUNT files were successfully archived"
-        echo "archive: $A_PATH"
         
         # Удаляем заархивированные файлы
         for file in $FILES_LIST; do
             rm "$file"
-            echo "Removed: $file"
         done
         
         # Вычисляем новый процент использования
