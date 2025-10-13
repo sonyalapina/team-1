@@ -228,7 +228,7 @@ else
   if check_grep "$out" "Внимание: Эта папка не имеет жесткого ограничени|Продолжение без ограничени"; then
     # проверим, есть ли следующее адекватное сообщение (ниже порога или завершение)
     if check_grep "$out" "below threshold|Log directory usage is below threshold|No action needed|Завершение работы|Files not found|No suitable files found"; then
-      echo "PASS 10a (ru flow)"; pass=$((pass+1))
+      echo "PASS 10a"; pass=$((pass+1))
     else
       # может быть скрипт просто вывел предупреждение и ожидал ввода — считаем это FAIL, но покажем вывод
       echo "FAIL 10a — русское сообщение есть, но нет продолжения (ниже порога / завершения)"
