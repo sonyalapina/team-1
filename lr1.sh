@@ -201,7 +201,7 @@ while true; do
     echo "Need to free approximately $((BYTES_TO_FREE / 1024 / 1024)) MB"
 
     # Поиск файлов
-    OLD_FILES=$(find "$SOURCE_DIR" -maxdepth 1 -printf "%T@ %s %p\n" | sort -n)
+    OLD_FILES=$(find "$SOURCE_DIR" ! -path "$SOURCE_DIR" ! -name ".*" -maxdepth 1 -printf "%T@ %s %p\n" | sort -n)
 
     if [ -z "$OLD_FILES" ]; then
         echo "Files not found"
@@ -269,7 +269,7 @@ while true; do
         
         # Удаляем заархивированные файлы
         for file in $FILES_LIST; do
-            rm "$file"
+            rm -rf "$file"
         done
         
         # Вычисляем новый процент использования
