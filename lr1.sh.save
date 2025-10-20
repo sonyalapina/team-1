@@ -36,66 +36,81 @@ get_log_path(){
 
 setup_size_limit() {
     local target_dir="$normalized_path"
-    echo "Checking for folder restrictions: $target_dir"
+    echo "--------------------------------------------------------"
+    echo "Проверка ограничения размера для папки: $target_dir"
 
-    if mountpoint -q "$target_dir"; then
-        echo "Folder is already a mount point"
+    if mountpoint -q "$target_dir"; then."
+        return 0
+    fi
+    
+    echo "Внимание: Эта папка не имеет жесткого ограничения по размеру."
+    read -p "Хотите создать ограничение для этой папки? (y/n): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "Продолжение без ограничения. Расчет % будет вестись от общего размера диска."
         return 0
     fi
 
-    read -p "Do you want to create a restriction for this folder? (y/n): " confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-	echo "Continue without folder limit"
-	return 0
-    fi
-
+    # ПРОВЕРКА: Папка должна быть пустой для монтирования
     if [ "$(ls -A "$target_dir")" ]; then
-        echo "Warn: Folder '$target_dir' should be empty"
+        echo "Ошибка: Папку '$target_dir' необходимо очистить перед созданием ограничения."
         exit 1
     fi
 
-    local available_space=$(df -m "$normalized_path" | awk 'NR==2 {print $4}')
-
-    read -p "Enter the max size(in MB) of the folder (available: ${available_space}MB): " max_size
-
+    read -p "Введите максимальный размер для папки в МБ (максимальный размер: "$(df -m "$normalized_path" | awk 'NR==2 {print $4}')"МБ): " max_size
     if [ -z "$max_size" ]; then
-        echo "Err: Size not entered"
+        echo "Ошибка: Размер не указан."
         exit 1
     fi
 
     if ! [[ "$max_size" =~ ^[0-9]+$ ]]; then 
-        echo "Err: size entered incorrectly"
+        echo "Ошибка: размер указан не верно"
         exit 1
     fi
 
-    if [ "$max_size" -gt "$available_space" ]; then
-        echo "Err: Exceeding the allowed size"
+    if [ $max_size -gt $(df -m "$normalized_path" | awk 'NR==2 {print $4}') ]; then
+        echo "Ошибка: превышение допустимого размера."
         exit 1
     fi
-
+    
     local image_storage="/var/disk-images"
-    local image_name="$(basename "$target_dir")-image.img"
+    local image_name="$(echo "$target_dir" | sed 's|/|_|g').img"
     local image_path="$image_storage/$image_name"
 
-    echo "Container file will create in '$image_path' with size ${max_size} MB"
-    read -p "The rights of a superuser are required in order to continue (sudo). Continue? (y/n): " sudo_confirm
+    echo "Будет создан файл-контейнер '$image_path' размером "$max_size"M."
+    read -p "Для продолжения требуются права суперпользователя (sudo). Продолжить? (y/n): " sudo_confirm
     if [[ ! "$sudo_confirm" =~ ^[Yy]$ ]]; then
-        echo "Operation cancelled"
+        echo "Операция отменена."
         exit 1
     fi
 
     sudo mkdir -p "$image_storage"
-    sudo dd if=/dev/zero of="$image_path" bs=1M count="$max_size" status=none
+    echo "1. Создание файла-контейнера..."
+    sudo fallocate -l ""$max_size"M" "$image_path"
+    echo "2. Форматирование в ext4..."
     sudo mkfs.ext4 "$image_path"
+    echo "3. Монтирование в '$target_dir'..."
     sudo mount -o loop "$image_path" "$target_dir"
+    
     sudo chown "$(whoami):$(whoami)" "$target_dir"
 
     if mountpoint -q "$target_dir"; then
-        echo "The folder was successfully mounted and is limited in size ${max_size} MB"
+        echo "✓ Папка успешно примонтирована и ограничена размером "$max_size"M."
     else
-        echo "Err: Failed to mount the file system"
-        sudo rm -f "$image_path"
+        echo "✗ Не удалось примонтировать файловую систему."
+        sudo rm -f "$image_path" # Очистка
         exit 1
+    fi
+
+    read -p "Добавить автоматическое монтирование при перезагрузке системы в /etc/fstab? (y/n): " fstab_confirm
+    if [[ "$fstab_confirm" =~ ^[Yy]$ ]]; then
+        local fstab_entry="$image_path $target_dir ext4 loop,defaults 0 0"
+        # Проверяем, нет ли уже такой записи
+        if ! sudo grep -qF "$fstab_entry" /etc/fstab; then
+            echo "$fstab_entry" | sudo tee -a /etc/fstab > /dev/null
+            echo "✓ Запись добавлена в /etc/fstab."
+        else
+            echo "Запись уже существует в /etc/fstab."
+        fi
     fi
 }
 
@@ -108,13 +123,13 @@ input_threshold(){
             continue
         fi
         THRESHOLD=$(echo "$THRESHOLD" | tr -d ' ')
-	
+        
         case $THRESHOLD in
             *[!0-9]*)
                 echo "Threshold must be a number"
                 continue
                 ;;
-        esac
+        esac 
         
         if [ "$THRESHOLD" -lt 1 ] || [ "$THRESHOLD" -gt 100 ]; then
             echo "Threshold must be between 1 and 100"
